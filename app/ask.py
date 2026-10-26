@@ -21,12 +21,19 @@ from app.config import MODEL, api_error_message, get_api_key
 DEFAULT_QUESTION = "AIE2026の講座の宿題にある「3レベル」とは何ですか？"
 
 
-def ask(question: str) -> str:
-    client = genai.Client(api_key=get_api_key())
-    response = client.models.generate_content(model=MODEL, contents=question)
-
-    # TODO(第1回 演習): response.usage_metadata から
-    #   入力トークン数と出力トークン数を表示してみよう（Copilotに頼んでよい）
+def ask(question: str, session=None) -> str:
+    if session is None:
+        client = genai.Client(api_key=get_api_key())
+        response = client.models.generate_content(model=MODEL, contents=question)
+    else:
+        response = session.send_message(question)
+    usage = getattr(response, "usage_metadata", None)
+    input_tokens = getattr(usage, "prompt_token_count", None)
+    output_tokens = getattr(usage, "candidates_token_count", None)
+    print(
+        f"[usage] input: {input_tokens if input_tokens is not None else '不明'} tokens, "
+        f"output: {output_tokens if output_tokens is not None else '不明'} tokens"
+    )
 
     return response.text
 
@@ -34,9 +41,39 @@ def ask(question: str) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser(description="素のLLMに質問する")
     parser.add_argument("question", nargs="?", default=DEFAULT_QUESTION)
+    parser.add_argument("--chat", action="store_true", help="会話を続ける")
     args = parser.parse_args()
 
     print(f"[model] {MODEL}")
+    if args.chat:
+        client = genai.Client(api_key=get_api_key())
+
+        # 会話を1回だけ作り、同じものを使い続ける。
+        session = client.chats.create(model=MODEL)
+        print("会話モード：q で終了します。")
+
+        try:
+            while True:
+                question = input("\n[you] > ").strip()
+
+                if question.lower() == "q":
+                    break
+
+                if not question:
+                    continue
+
+                try:
+                    print(ask(question, session=session))
+                except errors.APIError as e:
+                    print(api_error_message(e.code, e.message))
+
+        except (EOFError, KeyboardInterrupt):
+            print()
+        finally:
+            client.close()
+
+        print("会話を終了しました。")
+        return
     print(f"[質問] {args.question}\n")
     try:
         print(ask(args.question))
